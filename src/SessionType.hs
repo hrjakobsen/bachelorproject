@@ -45,46 +45,56 @@ dual (Var c)     = Var c
 maybeSplit (x:xs) = Just (x, xs)
 maybeSplit _      = Nothing
 
-parse :: String -> Maybe (SessionType, String)
-parse [] = Nothing
-parse xs = let split = dropWhile (==' ') xs
-           in parse' split <|> parse'' split
 
--- parse for ;
-parse' xs = do
-        (s1, xs')   <- parse'' xs  
-        (c, xs'')   <- maybeSplit xs'
-        (s2, xs''') <- parse xs''
-        if c == ';' then Just (Seq s1 s2, xs''') else Nothing
+parseSessionType :: String -> Maybe SessionType
+parseSessionType s = fst <$> parse s 
+    where
+        parse :: String -> Maybe (SessionType, String)
+        parse [] = Nothing
+        parse xs = let split = dropWhile (==' ') xs
+                   in parseSeq split <|> parseRest split
 
--- parse for the rest
-parse'' ('S':'k':'i':'p':xs)       = Just (Skip, xs) 
-parse'' ('?':xs)                   = first In <$> parseBaseType xs  
-parse'' ('!':xs)                   = first Out <$> parseBaseType xs 
-parse'' ('&':'{':xs)               = first Accept <$> parseListOfTypes xs
-parse'' ('+':'{':xs)               = first Select <$> parseListOfTypes xs
-parse'' ('r':'e':'c':' ':c:'.':xs) = first (Rec c) <$> parse xs
-parse'' (x:xs)                     = Just (Var x, xs)
-   
+        -- parse for ;
+        -- parseSeq
+        parseSeq :: String -> Maybe (SessionType, String)
+        parseSeq xs = do
+            (s1, xs')   <- parseRest xs  
+            xs''        <- removeSemicolon xs'
+            (s2, xs''') <- parse xs''
+            return (Seq s1 s2, xs''') 
+            where removeSemicolon :: String -> Maybe String
+                  removeSemicolon (';':xs) = Just xs
+                  removeSemicolon _        = Nothing
 
-parseBaseType :: String -> Maybe (BaseType, String)
-parseBaseType ('I':'n':'t':xs)     = Just (Int, xs)
-parseBaseType ('B':'o':'o':'l':xs) = Just (Bool, xs)
-parseBaseType _                    = Nothing 
+        -- parse for the rest
+        parseRest :: String -> Maybe (SessionType, String)
+        parseRest ('S':'k':'i':'p':xs)       = Just (Skip, xs) 
+        parseRest ('?':xs)                   = first In <$> parseBaseType xs  
+        parseRest ('!':xs)                   = first Out <$> parseBaseType xs 
+        parseRest ('&':'{':xs)               = first Accept <$> parseListOfTypes xs
+        parseRest ('+':'{':xs)               = first Select <$> parseListOfTypes xs
+        parseRest ('r':'e':'c':' ':c:'.':xs) = first (Rec c) <$> parse xs
+        parseRest (x:xs)                     = Just (Var x, xs)
+           
 
-parseListOfTypes :: String -> Maybe ([(String, SessionType)], String)
-parseListOfTypes ('}':xs) = Just ([], xs)
-parseListOfTypes xs       =
-    let (name, xs') = break (==':') xs
-        parsed      = parse (drop 1 xs')
-    in parsed >>= (\(s, (x:xs'')) ->
-        case x of 
-            '}'       -> Just ([(name, s)], xs'')
-            ','       -> first ((name, s):) <$> parseListOfTypes xs''
-            otherwise -> Nothing)
-            
+        parseBaseType :: String -> Maybe (BaseType, String)
+        parseBaseType ('I':'n':'t':xs)     = Just (Int, xs)
+        parseBaseType ('B':'o':'o':'l':xs) = Just (Bool, xs)
+        parseBaseType _                    = Nothing 
+
+        parseListOfTypes :: String -> Maybe ([(String, SessionType)], String)
+        parseListOfTypes ('}':xs) = Just ([], xs)
+        parseListOfTypes xs       = do
+            let (name, xs') = break (==':') xs
+            (s, (x:xs''))  <- parse (drop 1 xs')
+            case x of 
+                '}'       -> Just ([(name, s)], xs'')
+                ','       -> first ((name, s):) <$> parseListOfTypes xs''
+                otherwise -> Nothing
+                    
 
 -- Rest of code is used for testing 
+
 test :: IO ()
 test = do
     let tests = map show [ Skip
@@ -98,8 +108,9 @@ test = do
                          , (Rec 'a' (Rec 'b' (In Int)))
                          ]
     
-    let parsed = zip tests $ map parse tests
-    mapM_ (putStrLn . show) parsed
+    let parsed = zip tests $ map parseSessionType tests 
+    mapM_ putStrLn $ map show parsed
+
         
 
 
